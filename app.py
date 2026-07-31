@@ -21,7 +21,7 @@ from google.genai import types
 
 ARQUIVO_EXCEL = "formularios_extraidos.xlsx"
 NOME_ABA = "Respostas"
-MODELO_GEMINI = "gemini-1.5-flash"  # modelo atual, com cota gratuita generosa
+MODELO_GEMINI = "gemini-3.5-flash"  # modelo atual, com cota gratuita generosa
 
 PROMPT_MAGICO = """
 Você é um especialista em digitalização de formulários físicos.
