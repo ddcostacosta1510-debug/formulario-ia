@@ -4,9 +4,6 @@ App: Digitalizador de Formulários com IA (Gemini) + Excel
 Captura foto (câmera ou upload) de um ou mais formulários físicos,
 usa o Gemini para extrair as perguntas/respostas em JSON e salva
 automaticamente como nova linha em uma planilha Excel local.
-
-Rodar localmente com:
-    streamlit run app.py
 """
 
 import json
@@ -42,26 +39,34 @@ Tarefa:
 """
 
 # ----------------------------------------------------------------------------
-# CLIENTE GEMINI
+# CLIENTE GEMINI E ESTADO DA SESSÃO
 # ----------------------------------------------------------------------------
 
 def obter_cliente_gemini() -> genai.Client:
     """
-    Lê a chave da API tanto do Secrets do Streamlit Cloud (quando publicado
-    na nuvem) quanto da variável de ambiente (quando rodando no seu computador).
+    Busca a chave de forma segura para não quebrar o site caso o Secrets não exista.
     """
-    api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+    api_key = None
+    
+    # 1. Tenta buscar no cofre da nuvem (Streamlit Secrets)
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+        
+    # 2. Se não achou na nuvem, tenta buscar localmente
     if not api_key:
-        st.error(
-            "Chave GEMINI_API_KEY não encontrada. "
-            "Configure-a em Secrets (na nuvem) ou como variável de ambiente (local)."
-        )
+        api_key = os.environ.get("GEMINI_API_KEY")
+        
+    if not api_key:
+        st.error("Chave GEMINI_API_KEY não encontrada. Configure-a em 'Settings > Secrets' no Streamlit Cloud.")
         st.stop()
+        
     return genai.Client(api_key=api_key)
 
 
 def extrair_dados_formulario(lista_imagens: list) -> dict:
-    """Envia a lista de imagens para o Gemini e retorna um dicionário Python com os dados extraídos."""
     client = obter_cliente_gemini()
 
     conteudo_envio = [PROMPT_MAGICO]
@@ -110,9 +115,7 @@ def garantir_planilha_existe():
 
 def salvar_novo_registro(dados: dict) -> pd.DataFrame:
     garantir_planilha_existe()
-
     df = pd.read_excel(ARQUIVO_EXCEL, sheet_name=NOME_ABA)
-
     novo_id = int(df["id"].max()) + 1 if not df.empty and df["id"].notna().any() else 1
 
     nova_linha = {
@@ -123,7 +126,6 @@ def salvar_novo_registro(dados: dict) -> pd.DataFrame:
 
     df_novo = pd.DataFrame([nova_linha])
     df_final = pd.concat([df, df_novo], ignore_index=True)
-
     df_final.to_excel(ARQUIVO_EXCEL, sheet_name=NOME_ABA, index=False)
     return df_final
 
@@ -139,14 +141,28 @@ st.caption("Tire uma foto ou envie arquivo(s) do formulário.")
 
 garantir_planilha_existe()
 
-aba_camera, aba_upload = st.tabs(["📷 Usar câmera", "📁 Enviar arquivo(s)"])
+# Memória para armazenar as fotos tiradas pela câmera
+if "fotos_camera" not in st.session_state:
+    st.session_state["fotos_camera"] = []
 
-imagens_para_processar = []
+aba_camera, aba_upload = st.tabs(["📷 Usar câmera", "📁 Enviar arquivo(s)"])
 
 with aba_camera:
     foto = st.camera_input("Tire uma foto do formulário")
+    
     if foto is not None:
-        imagens_para_processar.append((foto.getvalue(), foto.type or "image/jpeg"))
+        if st.button("📸 Guardar esta foto"):
+            st.session_state["fotos_camera"].append((foto.getvalue(), foto.type or "image/jpeg"))
+            st.success("Foto salva na memória! Tire a próxima foto acima ou clique em extrair.")
+            
+    if st.session_state["fotos_camera"]:
+        st.write(f"**Fotos prontas na memória:** {len(st.session_state['fotos_camera'])}")
+        if st.button("🗑️ Limpar fotos da câmera"):
+            st.session_state["fotos_camera"] = []
+            st.rerun()
+
+# Junta as fotos da câmera com as fotos enviadas por upload
+imagens_para_processar = list(st.session_state["fotos_camera"])
 
 with aba_upload:
     arquivos = st.file_uploader(
@@ -159,7 +175,7 @@ with aba_upload:
             imagens_para_processar.append((arquivo.getvalue(), arquivo.type or "image/jpeg"))
 
 if imagens_para_processar:
-    st.info(f"{len(imagens_para_processar)} imagem(ns) pronta(s) para leitura.")
+    st.info(f"{len(imagens_para_processar)} imagem(ns) pronta(s) para leitura no total.")
 
     cols = st.columns(len(imagens_para_processar))
     for idx, (img_bytes, _) in enumerate(imagens_para_processar):
@@ -187,11 +203,14 @@ if "dados_extraidos" in st.session_state:
             if st.button("✅ Salvar na planilha", type="primary"):
                 df_atualizado = salvar_novo_registro(dados)
                 st.success(f"Registro salvo! Total de linhas na planilha: {len(df_atualizado)}")
+                # Limpa a memória após salvar
                 del st.session_state["dados_extraidos"]
+                st.session_state["fotos_camera"] = []
                 st.rerun()
         with col2:
             if st.button("❌ Descartar"):
                 del st.session_state["dados_extraidos"]
+                st.session_state["fotos_camera"] = []
                 st.rerun()
 
 st.divider()
